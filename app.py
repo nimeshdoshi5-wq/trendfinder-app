@@ -8,16 +8,20 @@ from streamlit_autorefresh import st_autorefresh
 # Auto-refresh every 5 minutes
 st_autorefresh(interval=300000, key="refresh")
 
-st.set_page_config(page_title="TrendFinder Pro+", layout="wide")
-st.title("📈 TrendFinder Pro+ - Breakout Scanner")
+st.set_page_config(page_title="TrendFinder Pro+ F&O", layout="wide")
+st.title("📈 TrendFinder Pro+ - Breakout Scanner (F&O & Major Indices)")
 
-# Sidebar settings
+# Sidebar
 st.sidebar.header("Settings")
 symbols_input = st.sidebar.text_area(
-    "Enter Stock Symbols (comma separated, NSE example: RELIANCE.NS, TCS.NS):",
-    "RELIANCE.NS, TCS.NS, INFY.NS"
+    "Enter Stock Symbols (comma separated, NSE example: RELIANCE.NS, TCS.NS, INFY.NS, NIFTY50.NS, BANKNIFTY.NS):",
+    "RELIANCE.NS, TCS.NS, INFY.NS, NIFTY50.NS, BANKNIFTY.NS"
 )
-symbols = [s.strip() for s in symbols_input.split(",") if s.strip()]
+symbols_input = [s.strip() for s in symbols_input.split(",") if s.strip()]
+
+# Hardcoded F&O list (Nifty 50 + major F&O symbols)
+fo_symbols = ["RELIANCE.NS","TCS.NS","INFY.NS","HDFC.NS","ICICIBANK.NS","NIFTY50.NS","BANKNIFTY.NS","SENSEX.BO"]
+symbols = [s for s in symbols_input if s in fo_symbols]
 
 lookback_days = st.sidebar.number_input("Lookback Days for Resistance/Volume", 5, 30, 10)
 ema_period = st.sidebar.number_input("EMA Period", 5, 50, 20)
@@ -27,7 +31,7 @@ def is_market_open():
     now = datetime.now().time()
     return time(9, 15) <= now <= time(15, 30)
 
-# RSI Calculation
+# RSI calculation
 def calculate_rsi(series, period=14):
     delta = series.diff()
     gain = delta.clip(lower=0)
@@ -38,7 +42,6 @@ def calculate_rsi(series, period=14):
     rsi = 100 - (100/(1+rs))
     return rsi
 
-# Collect results
 results = []
 
 for symbol in symbols:
@@ -46,7 +49,7 @@ for symbol in symbols:
         df = yf.download(symbol, interval="5m", period="15d")
         if df.empty:
             continue
-        
+
         # EMA
         df["EMA"] = df["Close"].ewm(span=ema_period).mean()
         # VWAP
@@ -58,9 +61,9 @@ for symbol in symbols:
         latest = df.iloc[-1]
         prev_resistance = df["High"].rolling(lookback_days*78).max().iloc[-2]
         prev_support = df["Low"].rolling(lookback_days*78).min().iloc[-2]
-        
-        # Beta
+
         beta = yf.Ticker(symbol).info.get("beta", 1)
+        sector = yf.Ticker(symbol).info.get("sector", "Unknown")
 
         # Upside breakout
         upside = (latest["Close"] > prev_resistance and
@@ -75,8 +78,7 @@ for symbol in symbols:
                     latest["RSI"] < 40 and
                     beta > 1 and
                     latest["Volume"] > avg_vol)
-        
-        # Append results
+
         results.append({
             "Symbol": symbol,
             "Close": round(latest["Close"],2),
@@ -86,19 +88,30 @@ for symbol in symbols:
             "VWAP": round(latest["VWAP"],2),
             "RSI": round(latest["RSI"],2),
             "Beta": round(beta,2),
-            "Breakout": "▲" if upside else ("▼" if downside else "-")
+            "Breakout": "▲" if upside else ("▼" if downside else "-"),
+            "Sector": sector
         })
+
     except Exception as e:
         st.sidebar.error(f"{symbol}: {e}")
 
-# Display results
+# Sector-wise display
 if results:
-    df_results = pd.DataFrame(results)
-    st.dataframe(df_results.style.applymap(
-        lambda x: 'color: green;' if x=="▲" else ('color: red;' if x=="▼" else ''), subset=["Breakout"]
-    ), use_container_width=True)
+    sector_dict = {}
+    for r in results:
+        sec = r.get("Sector","Unknown")
+        if sec not in sector_dict:
+            sector_dict[sec] = []
+        sector_dict[sec].append(r)
 
-    # Show chart for first breakout stock
+    for sector_name, stocks in sector_dict.items():
+        with st.expander(sector_name):
+            df_sector = pd.DataFrame(stocks)
+            st.dataframe(df_sector.style.applymap(
+                lambda x: 'color: green;' if x=="▲" else ('color: red;' if x=="▼" else ''), subset=["Breakout"]
+            ), use_container_width=True)
+
+    # Chart for first breakout stock
     breakout_stocks = [r["Symbol"] for r in results if r["Breakout"] in ["▲","▼"]]
     if breakout_stocks:
         first_symbol = breakout_stocks[0]
@@ -114,6 +127,7 @@ if results:
         ))
         fig.update_layout(title=f"{first_symbol} Chart", xaxis_rangeslider_visible=False)
         st.plotly_chart(fig, use_container_width=True)
+
 else:
     if is_market_open():
         st.warning("⚠️ No breakout stocks right now.")

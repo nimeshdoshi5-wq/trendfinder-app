@@ -1,44 +1,41 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
-import plotly.graph_objects as go
+import plotly.express as px
+from nsepython import nse_fno_lot_sizes, nse_fetch, nse_quote, nse_sector
 from datetime import datetime, time
 from streamlit_autorefresh import st_autorefresh
 
+# -----------------------------
 # Auto-refresh every 5 minutes
 st_autorefresh(interval=300000, key="refresh")
 
-st.set_page_config(page_title="TrendFinder Pro+ F&O & Indices", layout="wide")
-st.title("📈 TrendFinder Pro+ - Breakout Scanner (F&O + Indices)")
+# -----------------------------
+# Page setup
+st.set_page_config(page_title="TrendFinder Pro+ NSE", layout="wide")
+st.title("📈 TrendFinder Pro+ - NSE Breakout Scanner (F&O + Indices)")
 
-# Sidebar
+# -----------------------------
+# Sidebar settings
 st.sidebar.header("Settings")
-symbols_input = st.sidebar.text_area(
-    "Enter Stock Symbols (comma separated, NSE example: RELIANCE.NS, TCS.NS, INFY.NS, NIFTY50.NS, BANKNIFTY.NS, SENSEX.BO):",
-    "RELIANCE.NS, TCS.NS, INFY.NS, HDFC.NS, ICICIBANK.NS, NIFTY50.NS, BANKNIFTY.NS, SENSEX.BO"
-)
-symbols_input = [s.strip() for s in symbols_input.split(",") if s.strip()]
-
-# Example full F&O list (200+ symbols)
-fo_symbols = [
-    "RELIANCE.NS","TCS.NS","INFY.NS","HDFC.NS","ICICIBANK.NS",
-    # ... add all 200+ F&O symbols here
-]
-
-indices = ["NIFTY50.NS", "BANKNIFTY.NS", "SENSEX.BO"]
-symbols = [s for s in symbols_input if s in fo_symbols + indices]
-
-lookback_days = st.sidebar.number_input("Lookback Days for Resistance/Volume", 5, 30, 10)
+lookback_days = st.sidebar.number_input("Lookback Days for Resistance/Support", 5, 30, 10)
 ema_period = st.sidebar.number_input("EMA Period", 5, 50, 20)
 
-# Market open check
+# -----------------------------
+# Market time check
 def is_market_open():
     now = datetime.now().time()
     return time(9, 15) <= now <= time(15, 30)
 
-# RSI calculation
-def calculate_rsi(series, period=14):
-    delta = series.diff()
+# -----------------------------
+# Indicators
+def calculate_ema(df, period=20):
+    return df['Close'].ewm(span=period).mean()
+
+def calculate_vwap(df):
+    return (df['Close']*df['Volume']).cumsum()/df['Volume'].cumsum()
+
+def calculate_rsi(df, period=14):
+    delta = df['Close'].diff()
     gain = delta.clip(lower=0)
     loss = -1*delta.clip(upper=0)
     avg_gain = gain.rolling(period).mean()
@@ -47,101 +44,108 @@ def calculate_rsi(series, period=14):
     rsi = 100 - (100/(1+rs))
     return rsi
 
-# Latest candle
-def get_latest(df):
-    if df.empty:
-        return None
-    return df.iloc[-1]
+# -----------------------------
+# Fetch NSE data function
+def fetch_nse_data(symbol, interval="5m", days=10):
+    try:
+        df = nse_fetch(symbol, interval, days)
+        if df.empty:
+            df = nse_fetch(symbol, "1d", 10)  # fallback daily
+        df["Close"] = df["close"].astype(float)
+        df["High"] = df["high"].astype(float)
+        df["Low"] = df["low"].astype(float)
+        df["Volume"] = df["volume"].astype(float)
+        return df
+    except:
+        return pd.DataFrame()
 
-# Sector assignment
-def get_sector(symbol):
-    if symbol in indices:
-        return "Indices"
-    return yf.Ticker(symbol).info.get("sector", "Unknown")
+# -----------------------------
+# F&O + Indices symbols
+fno_symbols = list(nse_fno_lot_sizes().keys())  # all F&O symbols (~200)
+indices = ["NIFTY", "BANKNIFTY", "SENSEX"]
+symbols = fno_symbols + indices
 
+# -----------------------------
+# Sector info
+sector_map = {}
+for s in symbols:
+    try:
+        info = nse_sector(s)
+        sector_map[s] = info.get("industry", "Unknown")
+    except:
+        sector_map[s] = "Unknown"
+
+# -----------------------------
+# Collect results
 results = []
 
-# Fetch data
 for symbol in symbols:
-    try:
-        interval = "5m" if symbol not in indices else "1d"
-        df = yf.download(symbol, interval=interval, period="15d" if interval=="5m" else "30d")
-        latest = get_latest(df)
-        if latest is None:
-            continue
+    df = fetch_nse_data(symbol)
+    if df.empty:
+        continue
 
-        # EMA, VWAP, RSI
-        df["EMA"] = df["Close"].ewm(span=ema_period).mean()
-        df["VWAP"] = (df['Close']*df['Volume']).cumsum()/df['Volume'].cumsum()
-        df["RSI"] = calculate_rsi(df["Close"],14)
+    df["EMA"] = calculate_ema(df, ema_period)
+    df["VWAP"] = calculate_vwap(df)
+    df["RSI"] = calculate_rsi(df, 14)
 
-        avg_vol = df["Volume"].tail(lookback_days*78 if interval=="5m" else lookback_days).mean()
-        prev_res = float(df["High"].rolling(lookback_days*78 if interval=="5m" else lookback_days).max().iloc[-2])
-        prev_sup = float(df["Low"].rolling(lookback_days*78 if interval=="5m" else lookback_days).min().iloc[-2])
+    latest = df.iloc[-1]
+    avg_vol = df['Volume'].tail(lookback_days*78 if len(df)>78 else len(df)).mean()
+    prev_res = df['High'].rolling(lookback_days*78 if len(df)>78 else len(df)).max().iloc[-2]
+    prev_sup = df['Low'].rolling(lookback_days*78 if len(df)>78 else len(df)).min().iloc[-2]
 
-        latest_close = float(latest["Close"])
-        latest_vwap = float(latest["VWAP"])
-        latest_rsi = float(latest["RSI"])
-        latest_vol = float(latest["Volume"])
-        beta = yf.Ticker(symbol).info.get("beta",1)
-        sector = get_sector(symbol)
+    beta = 1.2  # placeholder
 
-        # Breakout logic
-        upside = (latest_close>prev_res and latest_close>latest_vwap and latest_rsi>60 and beta>1 and latest_vol>avg_vol)
-        downside = (latest_close<prev_sup and latest_close<latest_vwap and latest_rsi<40 and beta>1 and latest_vol>avg_vol)
+    upside = latest['Close']>prev_res and latest['Close']>latest['VWAP'] and latest['RSI']>60 and latest['Volume']>avg_vol
+    downside = latest['Close']<prev_sup and latest['Close']<latest['VWAP'] and latest['RSI']<40 and latest['Volume']>avg_vol
 
-        results.append({
-            "Symbol": symbol,
-            "Close": round(latest_close,2),
-            "Volume": int(latest_vol),
-            "AvgVol": int(avg_vol),
-            "EMA": round(float(latest["EMA"]),2),
-            "VWAP": round(latest_vwap,2),
-            "RSI": round(latest_rsi,2),
-            "Beta": round(beta,2),
-            "Breakout": "▲" if upside else ("▼" if downside else "-"),
-            "Sector": sector
-        })
+    results.append({
+        "Symbol": symbol,
+        "Sector": sector_map.get(symbol, "Unknown"),
+        "Close": round(latest['Close'],2),
+        "Breakout": "▲" if upside else ("▼" if downside else "-"),
+        "EMA": round(latest['EMA'],2),
+        "VWAP": round(latest['VWAP'],2),
+        "RSI": round(latest['RSI'],2),
+        "Beta": beta
+    })
 
-    except Exception as e:
-        st.sidebar.error(f"{symbol}: {e}")
+# -----------------------------
+# Display results
 
-# Sector-wise display
 if results:
-    sector_dict = {}
-    for r in results:
-        sec = r["Sector"]
-        if sec not in sector_dict:
-            sector_dict[sec] = []
-        sector_dict[sec].append(r)
+    df_results = pd.DataFrame(results)
 
-    for sector_name, items in sector_dict.items():
-        with st.expander(sector_name):
-            indices_list = [x for x in items if x["Symbol"] in indices]
-            stocks_list = [x for x in items if x["Symbol"] not in indices]
-            combined = indices_list + stocks_list
-            df_sector = pd.DataFrame(combined)
-            st.dataframe(df_sector.style.applymap(
-                lambda x: 'color: green;' if x=="▲" else ('color: red;' if x=="▼" else ''), subset=["Breakout"]
-            ), use_container_width=True)
+    # Color breakout arrows
+    def color_arrow(val):
+        if val=="▲":
+            return 'color: green; font-weight: bold;'
+        elif val=="▼":
+            return 'color: red; font-weight: bold;'
+        else:
+            return ''
 
-    # Chart for first breakout
-    breakout_stocks = [r["Symbol"] for r in results if r["Breakout"] in ["▲","▼"]]
+    st.subheader("All F&O + Indices Breakout / Breakdown")
+    st.dataframe(df_results.style.applymap(color_arrow, subset=['Breakout']), use_container_width=True)
+
+    # Sector-wise expandable
+    sectors = df_results['Sector'].unique()
+    for sec in sectors:
+        sec_df = df_results[df_results['Sector']==sec]
+        if not sec_df.empty:
+            with st.expander(f"{sec} sector"):
+                st.dataframe(sec_df.style.applymap(color_arrow, subset=['Breakout']), use_container_width=True)
+
+    # Chart for first breakout stock
+    breakout_stocks = [r for r in results if r['Breakout']=="▲"]
     if breakout_stocks:
-        first_symbol = breakout_stocks[0]
-        interval_chart = "5m" if first_symbol not in indices else "1d"
-        df_chart = yf.download(first_symbol, interval=interval_chart, period="5d")
-        df_chart["EMA"] = df_chart["Close"].ewm(span=ema_period).mean()
-        fig = go.Figure()
-        fig.add_trace(go.Candlestick(
-            x=df_chart.index, open=df_chart['Open'], high=df_chart['High'],
-            low=df_chart['Low'], close=df_chart['Close'], name="Candlestick"
-        ))
-        fig.add_trace(go.Scatter(
-            x=df_chart.index, y=df_chart['EMA'], mode='lines', name=f"EMA {ema_period}", line=dict(color='blue')
-        ))
-        fig.update_layout(title=f"{first_symbol} Chart", xaxis_rangeslider_visible=False)
+        first_symbol = breakout_stocks[0]['Symbol']
+        df_chart = fetch_nse_data(first_symbol, interval="5m", days=5)
+        df_chart["EMA"] = calculate_ema(df_chart, ema_period)
+        fig = px.line(df_chart, x=df_chart.index, y=["Close", "EMA"], title=f"{first_symbol} Chart")
         st.plotly_chart(fig, use_container_width=True)
 
 else:
-    st.info("⏰ Market Closed or No breakout stocks currently. Showing last available data.")
+    if is_market_open():
+        st.warning("⚠️ No breakout stocks right now.")
+    else:
+        st.info("⏰ Market Closed or showing last available data.")

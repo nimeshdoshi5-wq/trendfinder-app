@@ -1,3 +1,7 @@
+
+CONSUMER_KEY = st.secrets["CONSUMER_KEY"]
+CONSUMER_SECRET = st.secrets["CONSUMER_SECRET"]
+
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 import requests

@@ -9,17 +9,17 @@ from streamlit_autorefresh import st_autorefresh
 st_autorefresh(interval=300000, key="refresh")
 
 st.set_page_config(page_title="TrendFinder Pro+ F&O", layout="wide")
-st.title("📈 TrendFinder Pro+ - Breakout Scanner (F&O & Major Indices)")
+st.title("📈 TrendFinder Pro+ - Breakout Scanner (F&O + Indices)")
 
 # Sidebar
 st.sidebar.header("Settings")
 symbols_input = st.sidebar.text_area(
-    "Enter Stock Symbols (comma separated, NSE example: RELIANCE.NS, TCS.NS, INFY.NS, NIFTY50.NS, BANKNIFTY.NS):",
-    "RELIANCE.NS, TCS.NS, INFY.NS, NIFTY50.NS, BANKNIFTY.NS"
+    "Enter Stock Symbols (comma separated, NSE example: RELIANCE.NS, TCS.NS, INFY.NS, NIFTY50.NS, BANKNIFTY.NS, SENSEX.BO):",
+    "RELIANCE.NS, TCS.NS, INFY.NS, HDFC.NS, NIFTY50.NS, BANKNIFTY.NS, SENSEX.BO"
 )
 symbols_input = [s.strip() for s in symbols_input.split(",") if s.strip()]
 
-# Hardcoded F&O list (Nifty 50 + major F&O symbols)
+# Hardcoded F&O + major indices list
 fo_symbols = ["RELIANCE.NS","TCS.NS","INFY.NS","HDFC.NS","ICICIBANK.NS","NIFTY50.NS","BANKNIFTY.NS","SENSEX.BO"]
 symbols = [s for s in symbols_input if s in fo_symbols]
 
@@ -42,12 +42,21 @@ def calculate_rsi(series, period=14):
     rsi = 100 - (100/(1+rs))
     return rsi
 
+# Helper: get latest candle (5-min for stocks, daily for indices)
+def get_latest_data(df):
+    if not df.empty:
+        return df.iloc[-1]
+    return None
+
 results = []
 
 for symbol in symbols:
     try:
-        df = yf.download(symbol, interval="5m", period="15d")
-        if df.empty:
+        # Interval: 5m for stocks, 1d for indices
+        interval = "5m" if symbol not in ["NIFTY50.NS","BANKNIFTY.NS","SENSEX.BO"] else "1d"
+        df = yf.download(symbol, interval=interval, period="15d")
+        latest = get_latest_data(df)
+        if latest is None:
             continue
 
         # EMA
@@ -57,13 +66,12 @@ for symbol in symbols:
         # RSI
         df["RSI"] = calculate_rsi(df["Close"], 14)
         
-        avg_vol = df["Volume"].tail(lookback_days*78).mean()
-        latest = df.iloc[-1]
-        prev_resistance = df["High"].rolling(lookback_days*78).max().iloc[-2]
-        prev_support = df["Low"].rolling(lookback_days*78).min().iloc[-2]
+        avg_vol = df["Volume"].tail(lookback_days*78).mean() if interval=="5m" else df["Volume"].mean()
+        prev_resistance = df["High"].rolling(lookback_days*78 if interval=="5m" else lookback_days).max().iloc[-2]
+        prev_support = df["Low"].rolling(lookback_days*78 if interval=="5m" else lookback_days).min().iloc[-2]
 
         beta = yf.Ticker(symbol).info.get("beta", 1)
-        sector = yf.Ticker(symbol).info.get("sector", "Unknown")
+        sector = yf.Ticker(symbol).info.get("sector", "Index" if symbol in ["NIFTY50.NS","BANKNIFTY.NS","SENSEX.BO"] else "Unknown")
 
         # Upside breakout
         upside = (latest["Close"] > prev_resistance and
@@ -111,11 +119,12 @@ if results:
                 lambda x: 'color: green;' if x=="▲" else ('color: red;' if x=="▼" else ''), subset=["Breakout"]
             ), use_container_width=True)
 
-    # Chart for first breakout stock
+    # Chart for first breakout stock/index
     breakout_stocks = [r["Symbol"] for r in results if r["Breakout"] in ["▲","▼"]]
     if breakout_stocks:
         first_symbol = breakout_stocks[0]
-        df_chart = yf.download(first_symbol, interval="5m", period="5d")
+        interval_chart = "5m" if first_symbol not in ["NIFTY50.NS","BANKNIFTY.NS","SENSEX.BO"] else "1d"
+        df_chart = yf.download(first_symbol, interval=interval_chart, period="5d")
         df_chart["EMA"] = df_chart["Close"].ewm(span=ema_period).mean()
         fig = go.Figure()
         fig.add_trace(go.Candlestick(
@@ -129,7 +138,4 @@ if results:
         st.plotly_chart(fig, use_container_width=True)
 
 else:
-    if is_market_open():
-        st.warning("⚠️ No breakout stocks right now.")
-    else:
-        st.info("⏰ Market Closed. App will show data during 9:15–15:30.")
+    st.info("⏰ Market Closed or No breakout stocks currently. Showing last available data.")

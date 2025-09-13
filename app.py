@@ -18,6 +18,7 @@ def get_access_token():
         st.error(f"Error: {response.text}")
         return None
 ACCESS_TOKEN = get_access_token()
+st.write("Access Token:", ACCESS_TOKEN)
 
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh

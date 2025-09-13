@@ -63,6 +63,59 @@ for symbol in symbols:
         beta = yf.Ticker(symbol).info.get("beta", 1)
 
         # Upside breakout
-        upside = latest["Close"] > prev_resistance and latest["Close"] > latest["VWAP"] and latest["RSI"]>60 and beta>1 and latest["Volume"]>avg_vol
+        upside = (latest["Close"] > prev_resistance and
+                  latest["Close"] > latest["VWAP"] and
+                  latest["RSI"] > 60 and
+                  beta > 1 and
+                  latest["Volume"] > avg_vol)
+
         # Downside breakout
-        downside = latest["Close"] < prev_support and latest["Close"] < latest["VWAP"] and latest["RSI"]<40 and bet_
+        downside = (latest["Close"] < prev_support and
+                    latest["Close"] < latest["VWAP"] and
+                    latest["RSI"] < 40 and
+                    beta > 1 and
+                    latest["Volume"] > avg_vol)
+        
+        # Append results
+        results.append({
+            "Symbol": symbol,
+            "Close": round(latest["Close"],2),
+            "Volume": int(latest["Volume"]),
+            "AvgVol": int(avg_vol),
+            "EMA": round(latest["EMA"],2),
+            "VWAP": round(latest["VWAP"],2),
+            "RSI": round(latest["RSI"],2),
+            "Beta": round(beta,2),
+            "Breakout": "▲" if upside else ("▼" if downside else "-")
+        })
+    except Exception as e:
+        st.sidebar.error(f"{symbol}: {e}")
+
+# Display results
+if results:
+    df_results = pd.DataFrame(results)
+    st.dataframe(df_results.style.applymap(
+        lambda x: 'color: green;' if x=="▲" else ('color: red;' if x=="▼" else ''), subset=["Breakout"]
+    ), use_container_width=True)
+
+    # Show chart for first breakout stock
+    breakout_stocks = [r["Symbol"] for r in results if r["Breakout"] in ["▲","▼"]]
+    if breakout_stocks:
+        first_symbol = breakout_stocks[0]
+        df_chart = yf.download(first_symbol, interval="5m", period="5d")
+        df_chart["EMA"] = df_chart["Close"].ewm(span=ema_period).mean()
+        fig = go.Figure()
+        fig.add_trace(go.Candlestick(
+            x=df_chart.index, open=df_chart['Open'], high=df_chart['High'],
+            low=df_chart['Low'], close=df_chart['Close'], name="Candlestick"
+        ))
+        fig.add_trace(go.Scatter(
+            x=df_chart.index, y=df_chart['EMA'], mode='lines', name=f"EMA {ema_period}", line=dict(color='blue')
+        ))
+        fig.update_layout(title=f"{first_symbol} Chart", xaxis_rangeslider_visible=False)
+        st.plotly_chart(fig, use_container_width=True)
+else:
+    if is_market_open():
+        st.warning("⚠️ No breakout stocks right now.")
+    else:
+        st.info("⏰ Market Closed. App will show data during 9:15–15:30.")

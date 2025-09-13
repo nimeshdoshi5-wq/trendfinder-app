@@ -8,10 +8,10 @@ from streamlit_autorefresh import st_autorefresh
 # Auto-refresh every 5 minutes
 st_autorefresh(interval=300000, key="refresh")
 
-st.set_page_config(page_title="TrendFinder", layout="wide")
-st.title("📈 TrendFinder - Breakout Beacon")
+st.set_page_config(page_title="TrendFinder Pro", layout="wide")
+st.title("📈 TrendFinder Pro - Breakout Beacon")
 
-# Sidebar inputs
+# Sidebar settings
 st.sidebar.header("Settings")
 symbols_input = st.sidebar.text_area(
     "Enter Stock Symbols (comma separated, NSE example: RELIANCE.NS, TCS.NS):",
@@ -22,7 +22,7 @@ symbols = [s.strip() for s in symbols_input.split(",") if s.strip()]
 lookback_days = st.sidebar.number_input("Lookback Days for Resistance/Volume", 5, 30, 10)
 ema_period = st.sidebar.number_input("EMA Period", 5, 50, 20)
 
-# Market time check
+# Market open check
 def is_market_open():
     now = datetime.now().time()
     return time(9, 15) <= now <= time(15, 30)
@@ -36,7 +36,7 @@ for symbol in symbols:
         if df.empty:
             continue
         
-        # EMA calculation
+        # EMA
         df["EMA"] = df["Close"].ewm(span=ema_period).mean()
         
         # Avg volume over last lookback_days
@@ -52,30 +52,32 @@ for symbol in symbols:
             latest["Close"] > prev_resistance
         )
         
-        if condition:
-            results.append({
-                "Symbol": symbol,
-                "Close": round(latest["Close"],2),
-                "Volume": int(latest["Volume"]),
-                "AvgVol": int(avg_vol),
-                "EMA": round(latest["EMA"],2),
-                "PrevResistance": round(prev_resistance,2)
-            })
+        results.append({
+            "Symbol": symbol,
+            "Close": round(latest["Close"],2),
+            "Volume": int(latest["Volume"]),
+            "AvgVol": int(avg_vol),
+            "EMA": round(latest["EMA"],2),
+            "PrevResistance": round(prev_resistance,2),
+            "Breakout": "✅" if condition else "❌"
+        })
     except Exception as e:
         st.sidebar.error(f"{symbol}: {e}")
 
-# Display results
+# Display results with color
 if results:
-    st.success("✅ Breakout Candidates Found")
     df_results = pd.DataFrame(results)
+    df_results = df_results.style.applymap(lambda x: 'color: green;' if x=="✅" else ('color: red;' if x=="❌" else ''), subset=["Breakout"])
     st.dataframe(df_results, use_container_width=True)
 
-    # Show chart for first breakout stock
-    first_symbol = results[0]["Symbol"]
-    df_chart = yf.download(first_symbol, interval="5m", period="5d")
-    df_chart["EMA"] = df_chart["Close"].ewm(span=ema_period).mean()
-    fig = px.line(df_chart, x=df_chart.index, y=["Close", "EMA"], title=f"{first_symbol} Chart")
-    st.plotly_chart(fig, use_container_width=True)
+    # Chart for first breakout stock
+    breakout_stocks = [r["Symbol"] for r in results if r["Breakout"]=="✅"]
+    if breakout_stocks:
+        first_symbol = breakout_stocks[0]
+        df_chart = yf.download(first_symbol, interval="5m", period="5d")
+        df_chart["EMA"] = df_chart["Close"].ewm(span=ema_period).mean()
+        fig = px.line(df_chart, x=df_chart.index, y=["Close", "EMA"], title=f"{first_symbol} Chart")
+        st.plotly_chart(fig, use_container_width=True)
 else:
     if is_market_open():
         st.warning("⚠️ No breakout stocks right now.")

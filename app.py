@@ -1,6 +1,19 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import requests
+import datetime
+import plotly.express as px
 
+# =========================
+# 🔑 Secrets (from Streamlit Cloud)
+# =========================
 CONSUMER_KEY = st.secrets["CONSUMER_KEY"]
 CONSUMER_SECRET = st.secrets["CONSUMER_SECRET"]
+
+# =========================
+# 🔐 Access Token Function
+# =========================
 def get_access_token():
     url = "https://napi.kotaksecurities.com/oauth2/token"
     payload = {
@@ -12,136 +25,118 @@ def get_access_token():
     response = requests.post(url, data=payload, headers=headers)
 
     if response.status_code == 200:
-        data = response.json()
-        return data["access_token"]
+        return response.json()["access_token"]
     else:
-        st.error(f"Error: {response.text}")
+        st.error(f"❌ Token Error: {response.text}")
         return None
-ACCESS_TOKEN = get_access_token()
-st.write("Access Token:", ACCESS_TOKEN)
-
-import streamlit as st
-from streamlit_autorefresh import st_autorefresh
-import requests
-import pandas as pd
-
-# Auto-refresh every 5 minutes
-st_autorefresh(interval=300000, key="refresh")
-
-st.set_page_config(page_title="TrendFinder Pro+ - Kotak NEO", layout="wide")
-st.title("📈 TrendFinder Pro+ - Breakout Scanner")
-
-# ---------------------------
-# API credentials (use Streamlit Secrets later)
-# ---------------------------
-CONSUMER_KEY = "YOUR_CONSUMER_KEY"
-CONSUMER_SECRET = "YOUR_CONSUMER_SECRET"
-
-# ---------------------------
-# Get Kotak NEO access token
-# ---------------------------
-def get_access_token():
-    url = "https://api.kotakneo.com/oauth2/token"
-    payload = {
-        "grant_type": "client_credentials",
-        "client_id": CONSUMER_KEY,
-        "client_secret": CONSUMER_SECRET
-    }
-    r = requests.post(url, data=payload)
-    token_data = r.json()
-    return token_data.get("access_token")
 
 ACCESS_TOKEN = get_access_token()
-HEADERS = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
 
-# ---------------------------
-# Symbols input
-# ---------------------------
-symbols_input = st.sidebar.text_area(
-    "Enter Symbols (comma separated):",
-    "RELIANCE,TCS,INFY,HDFC,ICICIBANK,NIFTY50,BANKNIFTY,SENSEX"
-)
-symbols = [s.strip() for s in symbols_input.split(",") if s.strip()]
-
-# ---------------------------
-# EMA, VWAP, RSI functions
-# ---------------------------
-def calculate_ema(df, period=20):
-    return df['close'].ewm(span=period).mean()
+# =========================
+# 📊 Indicators
+# =========================
+def calculate_rsi(series, period=14):
+    delta = series.diff()
+    gain = np.where(delta > 0, delta, 0)
+    loss = np.where(delta < 0, -delta, 0)
+    avg_gain = pd.Series(gain).rolling(period).mean()
+    avg_loss = pd.Series(loss).rolling(period).mean()
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
 
 def calculate_vwap(df):
-    return (df['close']*df['volume']).cumsum()/df['volume'].cumsum()
+    return (df['Close'] * df['Volume']).cumsum() / df['Volume'].cumsum()
 
-def calculate_rsi(df, period=14):
-    delta = df['close'].diff()
-    gain = delta.clip(lower=0)
-    loss = -1*delta.clip(upper=0)
-    avg_gain = gain.rolling(period).mean()
-    avg_loss = loss.rolling(period).mean()
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100/(1+rs))
-    return rsi
+# =========================
+# 📥 Fetch Stock Data
+# (Kotak Neo API endpoint को अपने हिसाब से adjust करो)
+# =========================
+def fetch_stock_data(symbol):
+    url = f"https://napi.kotaksecurities.com/stockdata/{symbol}"  # 🔴 Example endpoint
+    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
+    response = requests.get(url, headers=headers)
 
-# ---------------------------
-# Fetch symbol data from Kotak NEO API
-# ---------------------------
-def fetch_symbol_data(symbol, interval="5m", days=10):
-    url = f"https://api.kotakneo.com/marketdata/intraday/{symbol}?interval={interval}&days={days}"
-    r = requests.get(url, headers=HEADERS)
-    if r.status_code != 200:
-        st.sidebar.warning(f"{symbol}: API Error {r.status_code}")
+    if response.status_code == 200:
+        df = pd.DataFrame(response.json())
+        df["Date"] = pd.to_datetime(df["Date"])
+        return df
+    else:
+        st.error(f"{symbol}: {response.text}")
         return pd.DataFrame()
-    data = r.json()
-    df = pd.DataFrame(data)
-    df['close'] = df['close'].astype(float)
-    df['high'] = df['high'].astype(float)
-    df['low'] = df['low'].astype(float)
-    df['volume'] = df['volume'].astype(float)
-    return df
 
-# ---------------------------
-# Breakout / Breakdown logic
-# ---------------------------
-results = []
-
-for symbol in symbols:
-    interval = "5m" if symbol not in ["NIFTY50","BANKNIFTY","SENSEX"] else "1d"
-    df = fetch_symbol_data(symbol, interval=interval, days=10)
-    if df.empty:
-        continue
-
-    df["EMA"] = calculate_ema(df, 20)
+# =========================
+# 📈 Breakout Conditions
+# =========================
+def check_conditions(symbol, df):
+    df["RSI"] = calculate_rsi(df["Close"])
     df["VWAP"] = calculate_vwap(df)
-    df["RSI"] = calculate_rsi(df, 14)
 
     latest = df.iloc[-1]
-    avg_vol = df['volume'].tail(10*78 if interval=="5m" else 10).mean()
-    prev_res = df['high'].rolling(10*78 if interval=="5m" else 10).max().iloc[-2]
-    prev_sup = df['low'].rolling(10*78 if interval=="5m" else 10).min().iloc[-2]
+    avg_vol = df["Volume"].tail(10).mean()
+    prev_high = df["High"].rolling(10).max().iloc[-2]
+    prev_low = df["Low"].rolling(10).min().iloc[-2]
 
-    beta = 1.2  # Static beta for now
+    result = None
 
-    upside = latest['close']>prev_res and latest['close']>latest['VWAP'] and latest['RSI']>60 and latest['volume']>avg_vol
-    downside = latest['close']<prev_sup and latest['close']<latest['VWAP'] and latest['RSI']<40 and latest['volume']>avg_vol
+    # ✅ Upside condition
+    if (
+        latest["Close"] > prev_high
+        and latest["Close"] > latest["VWAP"]
+        and latest["RSI"] > 60
+        and latest["Volume"] > avg_vol
+    ):
+        result = {
+            "Symbol": symbol,
+            "Close": latest["Close"],
+            "RSI": latest["RSI"],
+            "Volume": latest["Volume"],
+            "Signal": "UP"
+        }
 
-    results.append({
-        "Symbol": symbol,
-        "Close": round(latest['close'],2),
-        "Breakout": "▲" if upside else ("▼" if downside else "-"),
-        "EMA": round(latest['EMA'],2),
-        "VWAP": round(latest['VWAP'],2),
-        "RSI": round(latest['RSI'],2),
-        "Beta": beta,
-        "Type": "Index" if symbol in ["NIFTY50","BANKNIFTY","SENSEX"] else "Stock"
-    })
+    # 🔻 Downside condition
+    elif (
+        latest["Close"] < prev_low
+        and latest["Close"] < latest["VWAP"]
+        and latest["RSI"] < 40
+        and latest["Volume"] > avg_vol
+    ):
+        result = {
+            "Symbol": symbol,
+            "Close": latest["Close"],
+            "RSI": latest["RSI"],
+            "Volume": latest["Volume"],
+            "Signal": "DOWN"
+        }
 
-# ---------------------------
-# Display results
-# ---------------------------
+    return result
+
+# =========================
+# 🚀 Streamlit App
+# =========================
+st.set_page_config(page_title="TrendFinder Pro+ - Breakout Scanner", layout="wide")
+st.title("📈 TrendFinder Pro+ - Breakout Scanner (F&O + Indices)")
+
+if not ACCESS_TOKEN:
+    st.stop()
+
+symbols = ["RELIANCE", "TCS", "INFY", "ICICIBANK"]  # 🔴 Example list (F&O + Nifty50 डालना होगा)
+
+results = []
+for symbol in symbols:
+    df = fetch_stock_data(symbol)
+    if not df.empty:
+        res = check_conditions(symbol, df)
+        if res:
+            results.append(res)
+
 if results:
-    df_res = pd.DataFrame(results)
-    st.dataframe(df_res.style.applymap(
-        lambda x: 'color: green;' if x=="▲" else ('color: red;' if x=="▼" else ''), subset=["Breakout"]
-    ), use_container_width=True)
+    df_results = pd.DataFrame(results)
+    for idx, row in df_results.iterrows():
+        if row["Signal"] == "UP":
+            st.markdown(f"🟢 **{row['Symbol']}** ↑ (Close: {row['Close']}, RSI: {row['RSI']:.2f})")
+        else:
+            st.markdown(f"🔴 **{row['Symbol']}** ↓ (Close: {row['Close']}, RSI: {row['RSI']:.2f})")
+
+    st.dataframe(df_results, use_container_width=True)
 else:
-    st.info("⏰ Market Closed or No breakout currently")
+    st.info("⏰ Market Closed or No breakout stocks right now. Showing last available data.")

@@ -1,6 +1,22 @@
 
 CONSUMER_KEY = st.secrets["CONSUMER_KEY"]
 CONSUMER_SECRET = st.secrets["CONSUMER_SECRET"]
+def get_access_token():
+    url = "https://napi.kotaksecurities.com/oauth2/token"
+    payload = {
+        "grant_type": "client_credentials",
+        "client_id": CONSUMER_KEY,
+        "client_secret": CONSUMER_SECRET
+    }
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    response = requests.post(url, data=payload, headers=headers)
+
+    if response.status_code == 200:
+        data = response.json()
+        return data["access_token"]
+    else:
+        st.error(f"Error: {response.text}")
+        return None
 
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh

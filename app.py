@@ -17,6 +17,7 @@ def get_access_token():
     else:
         st.error(f"Error: {response.text}")
         return None
+ACCESS_TOKEN = get_access_token()
 
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh

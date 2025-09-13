@@ -1,15 +1,15 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import plotly.express as px
+import plotly.graph_objects as go
 from datetime import datetime, time
 from streamlit_autorefresh import st_autorefresh
 
 # Auto-refresh every 5 minutes
 st_autorefresh(interval=300000, key="refresh")
 
-st.set_page_config(page_title="TrendFinder Pro", layout="wide")
-st.title("📈 TrendFinder Pro - Breakout Beacon")
+st.set_page_config(page_title="TrendFinder Pro+", layout="wide")
+st.title("📈 TrendFinder Pro+ - Breakout Scanner")
 
 # Sidebar settings
 st.sidebar.header("Settings")
@@ -27,6 +27,17 @@ def is_market_open():
     now = datetime.now().time()
     return time(9, 15) <= now <= time(15, 30)
 
+# RSI Calculation
+def calculate_rsi(series, period=14):
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -1*delta.clip(upper=0)
+    avg_gain = gain.rolling(period).mean()
+    avg_loss = loss.rolling(period).mean()
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100/(1+rs))
+    return rsi
+
 # Collect results
 results = []
 
@@ -38,48 +49,20 @@ for symbol in symbols:
         
         # EMA
         df["EMA"] = df["Close"].ewm(span=ema_period).mean()
+        # VWAP
+        df["VWAP"] = (df['Close']*df['Volume']).cumsum() / df['Volume'].cumsum()
+        # RSI
+        df["RSI"] = calculate_rsi(df["Close"], 14)
         
-        # Avg volume over last lookback_days
-        avg_vol = df["Volume"].tail(lookback_days*78).mean()  # ~78 5-min candles per day
-        
+        avg_vol = df["Volume"].tail(lookback_days*78).mean()
         latest = df.iloc[-1]
         prev_resistance = df["High"].rolling(lookback_days*78).max().iloc[-2]
-
-        # Breakout condition
-        condition = (
-            latest["Close"] > latest["EMA"] and
-            latest["Volume"] > avg_vol and
-            latest["Close"] > prev_resistance
-        )
+        prev_support = df["Low"].rolling(lookback_days*78).min().iloc[-2]
         
-        results.append({
-            "Symbol": symbol,
-            "Close": round(latest["Close"],2),
-            "Volume": int(latest["Volume"]),
-            "AvgVol": int(avg_vol),
-            "EMA": round(latest["EMA"],2),
-            "PrevResistance": round(prev_resistance,2),
-            "Breakout": "✅" if condition else "❌"
-        })
-    except Exception as e:
-        st.sidebar.error(f"{symbol}: {e}")
+        # Beta
+        beta = yf.Ticker(symbol).info.get("beta", 1)
 
-# Display results with color
-if results:
-    df_results = pd.DataFrame(results)
-    df_results = df_results.style.applymap(lambda x: 'color: green;' if x=="✅" else ('color: red;' if x=="❌" else ''), subset=["Breakout"])
-    st.dataframe(df_results, use_container_width=True)
-
-    # Chart for first breakout stock
-    breakout_stocks = [r["Symbol"] for r in results if r["Breakout"]=="✅"]
-    if breakout_stocks:
-        first_symbol = breakout_stocks[0]
-        df_chart = yf.download(first_symbol, interval="5m", period="5d")
-        df_chart["EMA"] = df_chart["Close"].ewm(span=ema_period).mean()
-        fig = px.line(df_chart, x=df_chart.index, y=["Close", "EMA"], title=f"{first_symbol} Chart")
-        st.plotly_chart(fig, use_container_width=True)
-else:
-    if is_market_open():
-        st.warning("⚠️ No breakout stocks right now.")
-    else:
-        st.info("⏰ Market Closed. App will show data during 9:15–15:30.")
+        # Upside breakout
+        upside = latest["Close"] > prev_resistance and latest["Close"] > latest["VWAP"] and latest["RSI"]>60 and beta>1 and latest["Volume"]>avg_vol
+        # Downside breakout
+        downside = latest["Close"] < prev_support and latest["Close"] < latest["VWAP"] and latest["RSI"]<40 and bet_

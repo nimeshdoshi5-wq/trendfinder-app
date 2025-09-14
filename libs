@@ -1,8 +1,1 @@
-trendfinder-app/
-├── app.py
-├── requirements.txt
-└── libs/
-    └── neo_api_client/
-        ├── __init__.py
-        ├── session.py
-        └── ...
+

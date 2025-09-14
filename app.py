@@ -1,43 +1,34 @@
-# app.py
 import streamlit as st
-import requests
+from libs.neo_api_client.session import NeoSession
 
-st.title("Kotak Neo API Login Test")
+st.title("Kotak Neo Trend Finder - Login Test")
 
-# User inputs
-user_id = st.text_input("User ID / Client ID")
-consumer_key = st.text_input("Consumer Key")
-consumer_secret = st.text_input("Consumer Secret")
-otp_code = st.text_input("TOTP / OTP from Neo App", max_chars=6)
+base_url = st.text_input("Base URL", "https://gwapi.kotaksecurities.com")
+api_token = st.text_input("API Token (from NEO dashboard)")
+client_key = st.text_input("Neo Client Key", "neotradeapi")
+mobile = st.text_input("Mobile Number (+91...)")
+ucc = st.text_input("Client ID / UCC")
+totp = st.text_input("TOTP (6 digits)")
+mpin = st.text_input("MPIN (6 digits)", type="password")
 
-if st.button("Login"):
-    if not user_id or not consumer_key or not consumer_secret or not otp_code:
-        st.error("Please fill all fields")
+if st.button("Login with TOTP"):
+    session = NeoSession(base_url, api_token, client_key)
+    success, resp = session.login_totp(mobile, ucc, totp)
+    if success:
+        st.success("Step 1 Successful! Session created.")
+        st.json(resp)
     else:
-        # Login API endpoint
-        login_url = "https://gw-napi.kotaksecurities.com/login/1.0"
+        st.error("Step 1 Failed")
+        st.json(resp)
 
-        # Headers
-        headers = {
-            "Content-Type": "application/json",
-            "X-ClientCode": user_id,
-            "X-ConsumerKey": consumer_key,
-            "X-ConsumerSecret": consumer_secret
-        }
-
-        # Payload
-        payload = {
-            "otp": otp_code
-        }
-
-        try:
-            response = requests.post(login_url, json=payload, headers=headers)
-            if response.status_code == 200:
-                data = response.json()
-                st.success("Login Successful!")
-                st.json(data)  # Shows full response including access token
-            else:
-                st.error(f"Login failed! Status Code: {response.status_code}")
-                st.json(response.json())
-        except Exception as e:
-            st.error(f"Error: {e}")
+if st.button("Validate MPIN"):
+    if "session" not in locals():
+        st.error("Step 1 first!")
+    else:
+        success, resp = session.validate_mpin(mpin)
+        if success:
+            st.success("Step 2 Successful! Trade token received.")
+            st.json(resp)
+        else:
+            st.error("Step 2 Failed")
+            st.json(resp)

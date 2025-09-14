@@ -1,59 +1,98 @@
+# app.py
 import streamlit as st
-import yfinance as yf
 import pandas as pd
-from datetime import datetime, timedelta
+import yfinance as yf
 import time
+import datetime
+import logging
 
+# ------------------ Setup Logging ------------------
+logging.basicConfig(filename='error.log', level=logging.INFO)
+
+# ------------------ Streamlit Page ------------------
+st.set_page_config(page_title="Trend Finder - Breakout Scanner", layout="wide")
 st.title("Trend Finder - Breakout Scanner")
+st.text("Scanning high beta breakout stocks every 5 min...")
 
-# Stock list (aap future me NSE/F&O symbols add kar sakte ho)
-stocks = ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS"]
+# ------------------ User Inputs ------------------
+stock_list_input = st.text_area("Enter stock symbols separated by comma", "RELIANCE.NS,TCS.NS,INFY.NS")
+stock_list = [s.strip() for s in stock_list_input.split(",")]
 
-# Function: fetch historical 10 min data
-def fetch_data(symbol):
+rsi_up = st.slider("RSI for Uptrend", 50, 100, 60)
+rsi_down = st.slider("RSI for Downtrend", 0, 50, 40)
+
+# ------------------ Helper Functions ------------------
+def get_stock_history(symbol, period="10d", interval="5m"):
     try:
-        df = yf.download(symbol, period="15d", interval="5m")
-        if df.empty:
-            return None
-        return df
+        data = yf.download(symbol, period=period, interval=interval)
+        if data.empty:
+            logging.info(f"No data for {symbol}")
+        return data
     except Exception as e:
-        st.error(f"Error fetching {symbol}: {e}")
-        return None
+        logging.error(f"Error fetching {symbol}: {e}")
+        return pd.DataFrame()  # empty df to avoid crash
 
-# Scan stocks
-results = []
-for stock in stocks:
-    hist = fetch_data(stock)
-    if hist is None or hist.empty:
-        continue
+def calculate_rsi(series, period=14):
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -1 * delta.clip(upper=0)
+    avg_gain = gain.rolling(window=period).mean()
+    avg_loss = loss.rolling(window=period).mean()
+    rs = avg_gain / (avg_loss + 1e-6)
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
 
-    # Check columns
-    if not all(x in hist.columns for x in ['High', 'Low', 'Volume', 'Close']):
-        st.warning(f"{stock} data missing required columns")
-        continue
+# ------------------ Main Scan Loop ------------------
+placeholder = st.empty()
 
-    last_10_high = hist['High'].iloc[-10:].tolist()
-    last_10_low = hist['Low'].iloc[-10:].tolist()
-    last_10_vol = hist['Volume'].iloc[-10:].tolist()
-    current_price = hist['Close'].iloc[-1]
-    avg_vol = sum(last_10_vol) / len(last_10_vol)
-
-    # Simple breakout condition
-    if current_price > max(last_10_high[:-1]) and last_10_vol[-1] > avg_vol:
-        results.append({
-            "Stock": stock,
-            "Current Price": current_price,
-            "Breakout Level": max(last_10_high[:-1]),
-            "Volume": last_10_vol[-1]
-        })
-
-# Display results
-if results:
-    st.subheader("Breakout Stocks (5 min scan)")
-    st.table(pd.DataFrame(results))
-else:
-    st.info("No breakout detected in this scan.")
-
-# Auto-refresh every 5 min
-st.write(f"Last scan: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-st.experimental_rerun()
+while True:
+    breakout_stocks = []
+    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    for stock_symbol in stock_list:
+        hist = get_stock_history(stock_symbol)
+        
+        # Safe check
+        if hist.empty or 'High' not in hist.columns or 'Low' not in hist.columns or 'Close' not in hist.columns or 'Volume' not in hist.columns:
+            continue
+        
+        last_10_high = hist['High'].iloc[-10:].tolist()
+        last_10_low = hist['Low'].iloc[-10:].tolist()
+        last_10_close = hist['Close'].iloc[-10:].tolist()
+        last_10_vol = hist['Volume'].iloc[-10:].tolist()
+        
+        # Current data
+        curr_close = last_10_close[-1]
+        curr_vol = last_10_vol[-1]
+        avg_vol_10 = sum(last_10_vol[:-1])/len(last_10_vol[:-1]) if len(last_10_vol[:-1]) > 0 else 0
+        
+        # RSI
+        hist['RSI'] = calculate_rsi(hist['Close'])
+        curr_rsi = hist['RSI'].iloc[-1]
+        
+        # Conditions
+        breakout = False
+        if curr_close > max(last_10_high[:-1]) and curr_vol > avg_vol_10:
+            if curr_rsi >= rsi_up:
+                breakout = "UP"
+            elif curr_rsi <= rsi_down:
+                breakout = "DOWN"
+        
+        if breakout:
+            breakout_stocks.append({
+                "Stock": stock_symbol,
+                "Close": curr_close,
+                "Volume": curr_vol,
+                "AvgVol10": avg_vol_10,
+                "RSI": round(curr_rsi,2),
+                "Direction": breakout
+            })
+    
+    # Display results in Streamlit
+    if breakout_stocks:
+        df_display = pd.DataFrame(breakout_stocks)
+        placeholder.table(df_display)
+    else:
+        placeholder.text(f"{current_time} - No breakout stocks found at this interval.")
+    
+    time.sleep(300)  # 5 min

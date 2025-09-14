@@ -1,56 +1,43 @@
-# Kotak Neo Trend Finder - Login Test with Pre-Filled Values
-
+# app.py
 import streamlit as st
-import pyotp
 import requests
-import time
 
-# -----------------------------
-# Default Values (तेरे details से भरे हुए)
-# -----------------------------
-DEFAULT_USER_ID = "XUBPA"   # यहां तेरा Client ID डाल
-DEFAULT_CONSUMER_KEY = "umPAhnWbqVMDMKbN0UfUr4zmq7ka"
-DEFAULT_CONSUMER_SECRET = "zk2xX_rLFWuuy7X1wFVsUTHok28a"
-DEFAULT_TOTP_SECRET ="vLC3jIzdKc5" # यहां वो secret डाल जो Neo App से मिलता है
+st.title("Kotak Neo API Login Test")
 
-# -----------------------------
-# Streamlit UI
-# -----------------------------
-st.title("Kotak Neo Trend Finder - Login Test")
+# User inputs
+user_id = st.text_input("User ID / Client ID")
+consumer_key = st.text_input("Consumer Key")
+consumer_secret = st.text_input("Consumer Secret")
+otp_code = st.text_input("TOTP / OTP from Neo App", max_chars=6)
 
-user_id = st.text_input("User ID / Client ID", value=DEFAULT_USER_ID)
-consumer_key = st.text_input("Consumer Key", value=DEFAULT_CONSUMER_KEY)
-consumer_secret = st.text_input("Consumer Secret", value=DEFAULT_CONSUMER_SECRET)
-totp_secret = st.text_input("TOTP Secret (base32)", value=DEFAULT_TOTP_SECRET)
+if st.button("Login"):
+    if not user_id or not consumer_key or not consumer_secret or not otp_code:
+        st.error("Please fill all fields")
+    else:
+        # Login API endpoint
+        login_url = "https://gw-napi.kotaksecurities.com/login/1.0"
 
-if st.button("Login Test"):
-    try:
-        # OTP Generate
-        totp = pyotp.TOTP(totp_secret)
-        otp = totp.now()
-
-        st.write(f"Generated OTP: {otp}")
-
-        # Login API call
-        url = "https://napi.kotaksecurities.com/oauth2/token"
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-        data = {
-            "grant_type": "password",
-            "username": user_id,
-            "password": otp,
-            "client_id": consumer_key,
-            "client_secret": consumer_secret
+        # Headers
+        headers = {
+            "Content-Type": "application/json",
+            "X-ClientCode": user_id,
+            "X-ConsumerKey": consumer_key,
+            "X-ConsumerSecret": consumer_secret
         }
 
-        response = requests.post(url, headers=headers, data=data)
+        # Payload
+        payload = {
+            "otp": otp_code
+        }
 
-        if response.status_code == 200:
-            token = response.json().get("access_token", "")
-            st.success("✅ Login Successful!")
-            st.code(token, language="text")
-        else:
-            st.error(f"❌ Login Failed! {response.status_code}")
-            st.json(response.json())
-
-    except Exception as e:
-        st.error(f"Error: {e}")
+        try:
+            response = requests.post(login_url, json=payload, headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                st.success("Login Successful!")
+                st.json(data)  # Shows full response including access token
+            else:
+                st.error(f"Login failed! Status Code: {response.status_code}")
+                st.json(response.json())
+        except Exception as e:
+            st.error(f"Error: {e}")

@@ -11,7 +11,7 @@ import time
 DEFAULT_USER_ID = "XUBPA"   # यहां तेरा Client ID डाल
 DEFAULT_CONSUMER_KEY = "umPAhnWbqVMDMKbN0UfUr4zmq7ka"
 DEFAULT_CONSUMER_SECRET = "zk2xX_rLFWuuy7X1wFVsUTHok28a"
-DEFAULT_TOTP_SECRET = "4649"  # यहां वो secret डाल जो Neo App से मिलता है
+DEFAULT_TOTP_SECRET ="vLC3jIzdKc5" # यहां वो secret डाल जो Neo App से मिलता है
 
 # -----------------------------
 # Streamlit UI

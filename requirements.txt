@@ -1,8 +1,2 @@
 streamlit
-pandas
-plotly
-nsepython
-streamlit-autorefresh
-streamlit
 requests
-pip install streamlit requests

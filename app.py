@@ -1,69 +1,46 @@
-# trendfinder_app.py
-import streamlit as st
-import requests
-import json
+# Kotak Neo API Trend Finder - Python Template
+# Requirements: neo_api_client (Kotak Neo Python SDK), requests
 
-st.set_page_config(page_title="Kotak Neo Trend Finder", layout="wide")
-st.title("Kotak Neo Trend Finder App")
+import neo_api_client
+import time
 
-# -----------------------
-# Step 1: Inputs
-# -----------------------
-st.sidebar.header("API Settings")
-consumer_key = st.sidebar.text_input("Consumer Key", value="umPAhnWbqVMDMKbN0UfUr4zmq7ka")
-consumer_secret = st.sidebar.text_input("Consumer Secret", value="zk2xX_rLFWuuy7X1wFVsUTHok28a")
-access_token = st.sidebar.text_input("Access Token", value="2bd863ac-8a0c-45b6-8752-209b88850f0d", type="password")
+# -------------------------------
+# Step 1: Initialize Base URL & Session
+# -------------------------------
+client = neo_api_client.BaseUrl()
+session = neo_api_client.SessionINIT(client)
 
-st.sidebar.markdown("""
-> ⚠️ Update Access Token after expiry.  
-> You don’t need to enter TOTP every time.
-""")
+# -------------------------------
+# Step 2: TOTP Login
+# -------------------------------
+mobile_number = "+917016250766"  # Tumhara mobile number
+totp_code = "1225"  # Neo app se jo 6-digit code aata hai, login ke waqt update karna hoga
 
-# -----------------------
-# Step 2: API Selection
-# -----------------------
-api_options = {
-    "Quotes": "https://gw-napi.kotaksecurities.com/apim/quotes/1.0",
-    "Orders": "https://gw-napi.kotaksecurities.com/Orders/2.0"
-}
-selected_api = st.selectbox("Select API Endpoint", list(api_options.keys()))
+# Step 2a: Initiate TOTP login
+login_resp = neo_api_client.Totp_login(session, mobile_number)
+print("TOTP Login initiated:", login_resp)
 
-# -----------------------
-# Step 3: Make API Call
-# -----------------------
-if st.button("Call API"):
-    if access_token.strip() == "":
-        st.error("Please enter your Access Token!")
-    else:
-        headers = {
-            "Authorization": f"Bearer {access_token.strip()}",
-            "Content-Type": "application/json"
-        }
+# Step 2b: Validate TOTP
+validation_resp = neo_api_client.Totp_validation(session, totp_code)
+print("TOTP Validation Response:", validation_resp)
 
-        try:
-            response = requests.get(api_options[selected_api], headers=headers)
-            if response.status_code == 200:
-                st.success("API Call Successful!")
-                st.json(response.json())
-            else:
-                st.error(f"Error {response.status_code}: {response.text}")
-        except Exception as e:
-            st.error(f"Request failed: {e}")
+# -------------------------------
+# Step 3: Use Session to Fetch Quotes
+# -------------------------------
+scrip_code = "TCS"  # Example: TCS stock
+quote_resp = neo_api_client.quotes(session, scrip_code)
+print("Quote for", scrip_code, ":", quote_resp)
 
-# -----------------------
-# Step 4: Real-time Display Placeholder
-# -----------------------
-st.markdown("---")
-st.subheader("Real-time Data (Optional)")
-
-if st.button("Fetch Latest Quote for TCS"):
-    symbol = "TCS"
-    quote_endpoint = f"https://gw-napi.kotaksecurities.com/apim/quotes/1.0/{symbol}"
-    try:
-        response = requests.get(quote_endpoint, headers={"Authorization": f"Bearer {access_token.strip()}"})
-        if response.status_code == 200:
-            st.json(response.json())
-        else:
-            st.error(f"Error {response.status_code}: {response.text}")
-    except Exception as e:
-        st.error(f"Request failed: {e}")
+# -------------------------------
+# Step 4: Place Order Example (Optional)
+# -------------------------------
+# order_data = {
+#     "exchange": "NSE",
+#     "tradingsymbol": "TCS",
+#     "transactiontype": "BUY",
+#     "quantity": 1,
+#     "ordertype": "MARKET",
+#     "producttype": "INTRADAY"
+# }
+# place_order_resp = neo_api_client.placeorder(session, order_data)
+# print("Place Order Response:", place_order_resp)

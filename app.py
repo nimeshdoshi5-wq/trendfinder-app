@@ -1,40 +1,59 @@
 import streamlit as st
-import time
 import yfinance as yf
-from libs.scanner import calculate_rsi, price_gain, check_breakout_gain
+import pandas as pd
+from datetime import datetime, timedelta
+import time
 
 st.title("Trend Finder - Breakout Scanner")
 
-# Example stocks
-symbols = ["TCS.NS", "RELIANCE.NS", "INFY.NS"]
+# Stock list (aap future me NSE/F&O symbols add kar sakte ho)
+stocks = ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS"]
 
-SCAN_INTERVAL = 300  # 5 minutes
-RSI_UPPER = 60
-RSI_LOWER = 40
+# Function: fetch historical 10 min data
+def fetch_data(symbol):
+    try:
+        df = yf.download(symbol, period="15d", interval="5m")
+        if df.empty:
+            return None
+        return df
+    except Exception as e:
+        st.error(f"Error fetching {symbol}: {e}")
+        return None
 
-while True:
-    for symbol in symbols:
-        # Fetch last 11 days of historical data
-        hist = yf.download(symbol, period="11d", interval="1d")
-        last_10_high = hist['High'].iloc[:-1].tolist()
-        last_10_low = hist['Low'].iloc[:-1].tolist()
-        avg_volume = hist['Volume'].iloc[:-1].mean()
-        current_price = hist['Close'].iloc[-1]
-        previous_close = hist['Close'].iloc[-2]
-        volume = hist['Volume'].iloc[-1]
+# Scan stocks
+results = []
+for stock in stocks:
+    hist = fetch_data(stock)
+    if hist is None or hist.empty:
+        continue
 
-        data = {
-            'lastPrice': current_price,
-            'previousClose': previous_close,
-            'volume': volume
-        }
+    # Check columns
+    if not all(x in hist.columns for x in ['High', 'Low', 'Volume', 'Close']):
+        st.warning(f"{stock} data missing required columns")
+        continue
 
-        rsi = calculate_rsi(hist['Close'].tolist())
-        trend = check_breakout_gain(data, last_10_high, last_10_low, avg_volume)
+    last_10_high = hist['High'].iloc[-10:].tolist()
+    last_10_low = hist['Low'].iloc[-10:].tolist()
+    last_10_vol = hist['Volume'].iloc[-10:].tolist()
+    current_price = hist['Close'].iloc[-1]
+    avg_vol = sum(last_10_vol) / len(last_10_vol)
 
-        if trend:
-            if trend == "Uptrend" and rsi > RSI_UPPER:
-                st.write(f"{symbol} 🔺 Uptrend | Gain: {price_gain(data):.2f}% | RSI: {rsi:.2f}")
-            elif trend == "Downtrend" and rsi < RSI_LOWER:
-                st.write(f"{symbol} 🔻 Downtrend | Loss: {price_gain(data):.2f}% | RSI: {rsi:.2f}")
-    time.sleep(SCAN_INTERVAL)
+    # Simple breakout condition
+    if current_price > max(last_10_high[:-1]) and last_10_vol[-1] > avg_vol:
+        results.append({
+            "Stock": stock,
+            "Current Price": current_price,
+            "Breakout Level": max(last_10_high[:-1]),
+            "Volume": last_10_vol[-1]
+        })
+
+# Display results
+if results:
+    st.subheader("Breakout Stocks (5 min scan)")
+    st.table(pd.DataFrame(results))
+else:
+    st.info("No breakout detected in this scan.")
+
+# Auto-refresh every 5 min
+st.write(f"Last scan: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+st.experimental_rerun()

@@ -1,46 +1,49 @@
 import requests
-import pyotp
 
 class NeoSession:
-    def __init__(self, user_id, consumer_key, consumer_secret, totp_secret):
-        self.user_id = user_id
-        self.consumer_key = consumer_key
-        self.consumer_secret = consumer_secret
-        self.totp_secret = totp_secret
-        self.session_token = None
+    def __init__(self, base_url, api_token, client_key):
+        self.base_url = base_url
+        self.api_token = api_token          # Authorization token from Neo dashboard
+        self.client_key = client_key        # neo-fin-key
+        self.sid = None                     # Session ID from Step 1
+        self.view_token = None              # View token from Step 1
+        self.trade_token = None             # Trade token from Step 2
 
-    def get_otp(self):
-        """
-        Auto-generate TOTP code from secret (valid for ~30 sec)
-        """
-        secret = self.totp_secret.strip()
-        # Fix base32 padding issue
-        missing_padding = len(secret) % 8
-        if missing_padding != 0:
-            secret += "=" * (8 - missing_padding)
-        return pyotp.TOTP(secret).now()
-
-    def login(self):
-        """
-        Login to Kotak Neo using Consumer Key, Secret, UserID and TOTP
-        """
-        otp = self.get_otp()
-        payload = {
-            "userid": self.user_id,
-            "consumerKey": self.consumer_key,
-            "consumerSecret": self.consumer_secret,
-            "totp": otp
+    def login_totp(self, mobile_number, ucc, totp):
+        url = f"{self.base_url}/login/1.0/login/v6/totp/login"
+        headers = {
+            "Authorization": self.api_token,
+            "neo-fin-key": self.client_key,
+            "Content-Type": "application/json"
         }
-
-        url = "https://wso2.kotaksecurities.com/neo/login/1.0"  # official login endpoint
-        res = requests.post(url, json=payload)
-
-        if res.status_code == 200:
-            try:
-                data = res.json()
-                self.session_token = data.get("sessionToken")
-                return self.session_token
-            except Exception as e:
-                raise Exception(f"Login response parse error: {res.text}") from e
+        payload = {
+            "mobileNumber": mobile_number,
+            "ucc": ucc,
+            "totp": totp
+        }
+        response = requests.post(url, json=payload, headers=headers)
+        data = response.json()
+        if response.status_code == 200 and "data" in data:
+            self.sid = data["data"]["sid"]
+            self.view_token = data["data"]["token"]
+            return True, data
         else:
-            raise Exception(f"Login failed! Status: {res.status_code}, Response: {res.text}")
+            return False, data
+
+    def validate_mpin(self, mpin):
+        url = f"{self.base_url}/login/1.0/login/v6/totp/validate"
+        headers = {
+            "Authorization": self.api_token,
+            "neo-fin-key": self.client_key,
+            "Content-Type": "application/json",
+            "sid": self.sid,
+            "Auth": self.view_token
+        }
+        payload = {"mpin": mpin}
+        response = requests.post(url, json=payload, headers=headers)
+        data = response.json()
+        if response.status_code == 200 and "data" in data:
+            self.trade_token = data["data"]["token"]
+            return True, data
+        else:
+            return False, data

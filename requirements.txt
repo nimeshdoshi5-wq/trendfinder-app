@@ -5,3 +5,4 @@ nsepython
 streamlit-autorefresh
 streamlit
 requests
+pip install streamlit requests
